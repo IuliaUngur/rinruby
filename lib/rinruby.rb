@@ -71,66 +71,70 @@ class RinRuby
   # Parse error
   ParseError=Class.new(Exception)
 
+  # RinRuby is invoked within a Ruby script (or the interactive "irb" prompt denoted >>) using:
+  #
+  #       >> require "rinruby"
+  #
+  # The previous statement reads the definition of the RinRuby class into the current Ruby interpreter and creates an instance of the RinRuby class named R. There is a second method for starting an instance of R which allows the user to use any name for the instance, in this case myr:
+  #
+  #       >> require "rinruby"
+  #       >> myr = RinRuby.new
+  #       >> myr.eval "rnorm(1)"
+  #
+  # Any number of independent instances of R can be created in this way.
+  #
+  # <b>Parameters that can be passed to the new method using a Hash:</b>
+  #
+  # * :echo: By setting the echo to false, output from R is suppressed, although warnings are still printed. This option can be changed later by using the echo method. The default is true.
+  # * :interactive: When interactive is false, R is run in non-interactive mode, resulting in plots without an explicit device being written to Rplots.pdf. Otherwise (i.e., interactive is true), plots are shown on the screen. The default is true.
+  # * :executable: The path of the R executable (which is "R" in Linux and Mac OS X, or "Rterm.exe" in Windows) can be set with the executable argument. The default is nil which makes RinRuby use the registry keys to find the path (on Windows) or use the path defined by $PATH (on Linux and Mac OS X).
+  # * :port: This is the smallest port number on the local host that could be used to pass data between Ruby and R. The actual port number used depends on port_width.
+  #
+  # It may be desirable to change the parameters to the instance of R, but still call it by the name of R. In that case the old instance of R which was created with the 'require "rinruby"' statement should be closed first using the quit method which is explained below. Unless the previous instance is killed, it will continue to use system resources until exiting Ruby. The following shows an example by changing the parameter echo:
+  #
+  #       >> require "rinruby"
+  #       >> R.quit
+  #       >> R = RinRuby.new(false)
 
-#RinRuby is invoked within a Ruby script (or the interactive "irb" prompt denoted >>) using:
-#
-#      >> require "rinruby"
-#
-#The previous statement reads the definition of the RinRuby class into the current Ruby interpreter and creates an instance of the RinRuby class named R. There is a second method for starting an instance of R which allows the user to use any name for the instance, in this case myr:
-#
-#      >> require "rinruby"
-#      >> myr = RinRuby.new
-#      >> myr.eval "rnorm(1)"
-#
-#Any number of independent instances of R can be created in this way.
-#
-#<b>Parameters that can be passed to the new method using a Hash:</b>
-#
-#* :echo: By setting the echo to false, output from R is suppressed, although warnings are still printed. This option can be changed later by using the echo method. The default is true.
-#* :interactive: When interactive is false, R is run in non-interactive mode, resulting in plots without an explicit device being written to Rplots.pdf. Otherwise (i.e., interactive is true), plots are shown on the screen. The default is true.
-#* :executable: The path of the R executable (which is "R" in Linux and Mac OS X, or "Rterm.exe" in Windows) can be set with the executable argument. The default is nil which makes RinRuby use the registry keys to find the path (on Windows) or use the path defined by $PATH (on Linux and Mac OS X).
-#* :port_number: This is the smallest port number on the local host that could be used to pass data between Ruby and R. The actual port number used depends on port_width.
-#* :port_width: RinRuby will randomly select a uniform number between port_number and port_number + port_width - 1 (inclusive) to pass data between Ruby and R. If the randomly selected port is not available, RinRuby will continue selecting random ports until it finds one that is available. By setting port_width to 1, RinRuby will wait until port_number is available. The default port_width is 1000.
-#
-#It may be desirable to change the parameters to the instance of R, but still call it by the name of R. In that case the old instance of R which was created with the 'require "rinruby"' statement should be closed first using the quit method which is explained below. Unless the previous instance is killed, it will continue to use system resources until exiting Ruby. The following shows an example by changing the parameter echo:
-#
-#      >> require "rinruby"
-#      >> R.quit
-#      >> R = RinRuby.new(false)
-attr_accessor :echo_enabled
-attr_reader :executable
-attr_reader :port_number
-attr_reader :port_width
-attr_reader :hostname
-def initialize(*args)
-  opts=Hash.new
-  if args.size==1 and args[0].is_a? Hash
-    opts=args[0]
-  else
-    opts[:echo]=args.shift unless args.size==0
-    opts[:interactive]=args.shift unless args.size==0
-    opts[:executable]=args.shift unless args.size==0
-    opts[:port_number]=args.shift unless args.size==0
-    opts[:port_width]=args.shift unless args.size==0
-  end
-  default_opts= {:echo=>true, :interactive=>true, :executable=>nil, :port_number=>38442, :port_width=>1000, :hostname=>'127.0.0.1'}
+  attr_reader :hostname
+  attr_reader :port
+  attr_reader :executable
+  attr_reader :interactive
+  attr_accessor :echo_enabled
+
+  def initialize(*args)
+
+    opts=Hash.new
+
+    if args.size==1 and args[0].is_a? Hash
+      opts=args[0]
+    else
+      opts[:echo]=args.shift unless args.size==0
+      opts[:interactive]=args.shift unless args.size==0
+      opts[:executable]=args.shift unless args.size==0
+      opts[:port]=args.shift unless args.size==0
+    end
+
+    default_opts = {
+      :echo        => true,
+      :interactive => true,
+      :executable  => nil,
+      :port        => 0,
+      :hostname    => '127.0.0.1'
+    }
 
     @opts=default_opts.merge(opts)
-    @port_width=@opts[:port_width]
     @executable=@opts[:executable]
     @hostname=@opts[:hostname]
-    while true
-      begin
-        @port_number = @opts[:port_number] + rand(port_width)
-        @server_socket = TCPServer::new(@hostname, @port_number)
-        break
-      rescue Errno::EADDRINUSE
-        sleep 0.5 if port_width == 1
-      end
-    end
+    @port=@opts[:port]
+
+    @server_socket = TCPServer::new(@hostname, @port)
+    @port = @server_socket.local_address.ip_port unless @port > 0
+
     @echo_enabled = @opts[:echo]
     @echo_stderr = false
     @interactive = @opts[:interactive]
+
     @platform = case RUBY_PLATFORM
       when /mswin/ then 'windows'
       when /mingw/ then 'windows'
@@ -167,7 +171,7 @@ def initialize(*args)
     @writer.puts <<-EOF
       #{RinRuby_KeepTrying_Variable} <- TRUE
       while ( #{RinRuby_KeepTrying_Variable} ) {
-        #{RinRuby_Socket} <- try(suppressWarnings(socketConnection("#{@hostname}", #{@port_number}, blocking=TRUE, open="rb")),TRUE)
+        #{RinRuby_Socket} <- try(suppressWarnings(socketConnection("#{@hostname}", #{@port}, blocking=TRUE, open="rb")),TRUE)
         if ( inherits(#{RinRuby_Socket},"try-error") ) {
           Sys.sleep(0.1)
         } else {
@@ -183,7 +187,7 @@ def initialize(*args)
     echo(nil,true) if @platform =~ /.*-java/      # Redirect error messages on the Java platform
   end
 
-#The quit method will properly close the bridge between Ruby and R, freeing up system resources. This method does not need to be run when a Ruby script ends.
+  #The quit method will properly close the bridge between Ruby and R, freeing up system resources. This method does not need to be run when a Ruby script ends.
 
   def quit
     begin
@@ -787,4 +791,3 @@ if ! defined?(R)
 
   R = RinRuby.new
 end
-
